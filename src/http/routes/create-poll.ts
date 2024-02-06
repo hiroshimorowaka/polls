@@ -6,13 +6,21 @@ export async function createPoll(app: FastifyInstance) {
 	app.post("/polls", async (req, res) => {
 		const createPollBody = z.object({
 			title: z.string(),
+			options: z.array(z.string()),
 		});
 
-		const reqBody = createPollBody.parse(req.body);
+		const { options, title } = createPollBody.parse(req.body);
 
 		const poll = await prisma.poll.create({
 			data: {
-				title: reqBody.title,
+				title: title,
+				options: {
+					createMany: {
+						data: options.map((option) => {
+							return { title: option };
+						}),
+					},
+				},
 			},
 		});
 
