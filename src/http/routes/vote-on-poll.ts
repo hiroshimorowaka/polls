@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 
 import { randomUUID } from "node:crypto";
+import { voting } from "../../../utils/voting-pub-sub";
+import { redis } from "../../lib/redis";
 
 export async function voteOnPoll(app: FastifyInstance) {
 	app.post("/polls/:pollId/votes", async (request, response) => {
@@ -31,17 +33,29 @@ export async function voteOnPoll(app: FastifyInstance) {
 
 			if (
 				userPreviousVoteOnPoll &&
-				userPreviousVoteOnPoll.pollOptionId !== pollOptionId
+				userPreviousVoteOnPoll.pollOptionId === pollOptionId
 			) {
+				return response
+					.status(400)
+					.send({ message: "You already voted on this poll" });
+			}
+
+			if (userPreviousVoteOnPoll) {
 				await prisma.vote.delete({
 					where: {
 						id: userPreviousVoteOnPoll.id,
 					},
 				});
-			} else {
-				return response
-					.status(400)
-					.send({ message: "You already voted on this poll" });
+				const votes = await redis.zincrby(
+					pollId,
+					-1,
+					userPreviousVoteOnPoll.pollOptionId,
+				);
+
+				voting.publish(pollId, {
+					pollOptionId: userPreviousVoteOnPoll.pollOptionId,
+					votes: Number(votes),
+				});
 			}
 		}
 
@@ -62,6 +76,13 @@ export async function voteOnPoll(app: FastifyInstance) {
 				pollId,
 				pollOptionId,
 			},
+		});
+
+		const votes = await redis.zincrby(pollId, 1, pollOptionId);
+
+		voting.publish(pollId, {
+			pollOptionId,
+			votes: Number(votes),
 		});
 
 		return response.status(201).send();
